@@ -1,0 +1,171 @@
+<!--
+  Copyright 2015 Google Inc. All Rights Reserved.
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<html>
+  <head>
+    <title>FireChess</title>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="css/chessboard-0.3.0.min.css" />
+    <script src="js/chessboard-0.3.0.min.js"></script>
+    <script src="js/chess.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/2.1.3/jquery.min.js"></script>
+    <script src="https://cdn.firebase.com/js/client/2.2.2/firebase.js"></script>
+  </head>
+  <body>
+    <div id="player"></div>
+    <div id="board" style="width: 400px"></div>
+    <button id="restartButton" type="button">Restart</button>
+    <div id="status"></div>
+
+    <script>
+      function randomRoomId(len) {
+        var text = "";
+        var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        for( var i=0; i < len; i++ )
+        text += possible.charAt(Math.floor(Math.random() * possible.length));
+        return text;
+      }
+
+      var STATES = { WATCHING: 0, JOINING: 1, PLAYING: 2 };
+
+      var $status = $('#status');
+      var $player = $('#player');
+
+      var state = STATES.WATCHING;
+      var player_w_joined = false;
+      var player_b_joined = false;
+      var player = null;
+
+      $(document).ready(function() {
+        var room = window.location.hash.substring(1);
+        if (room.length === 0) {
+          room = randomRoomId(5);
+          window.location.hash = '#' + room;
+        }
+        var fb = new Firebase('https://firechess-demo.firebaseio.com/rooms/' + room);
+
+        fb.child('player_w/online').on('value', function(snapshot) {
+          player_w_joined = snapshot.val();
+          updateStatus();
+          if (!snapshot.exists() && state === STATES.WATCHING) {
+            tryToJoin('w');
+          }
+        });
+        fb.child('player_b/online').on('value', function(snapshot) {
+          player_b_joined = snapshot.val();
+          updateStatus();
+          if (!snapshot.exists() && state === STATES.WATCHING) {
+            tryToJoin('b');
+          }
+        });
+
+        var game = new Chess();
+        var board = new ChessBoard('board', {
+          draggable: true,
+          onDragStart: function(source, piece, position, orientation) {
+            var re = new RegExp('^' + game.turn());
+            return (state === STATES.PLAYING 
+              && !game.game_over()
+              && player === game.turn()
+              && (piece.search(re) !== -1));
+          },
+          onDrop: function(source, target) {
+            var move = game.move({
+              from: source,
+              to: target,
+              promotion: 'q'
+            });
+            if (!move) return 'snapback';
+            fb.child('fen').set(game.fen());
+            updateStatus();
+          },
+          onSnapEnd: function() {
+            fb.child('fen').set(game.fen());
+            board.position(game.fen());
+          }
+        });
+
+        fb.child('fen').once('value', function(snapshot) {
+          if (!snapshot.exists()) {
+            fb.child('fen').set(game.fen());
+          }
+        });
+
+        fb.child('fen').on('value', function(snapshot) {
+          if (!snapshot.exists()) { return; }
+          var fen = snapshot.val();
+          var validation = game.validate_fen(fen);
+          if (validation.valid) {
+            game.load(fen);
+            board.position(fen);
+            updateStatus();
+          } else {
+            alert('Someone may be cheating...');
+          }
+        });
+
+        function tryToJoin(color) {
+          state = STATES.JOINING;
+          fb.child('player_' + color + '/online').transaction(function(current) {
+            return current === null;
+          }, function(error, committed) {
+            if (committed) {
+              state = STATES.PLAYING;
+              player = color;
+              fb.child('player_' + color + '/online').onDisconnect().remove();
+              updateStatus();
+            } else {
+              state = STATES.WATCHING;
+              updateStatus();
+            }
+          });
+        }
+
+        function updateStatus() {
+          var players = '';
+          if (state === STATES.PLAYING && player !== null) {
+            players = 'You are playing ' + (player === 'w' ? 'White' : 'Black') + '. ';
+            if (!player_w_joined || !player_b_joined) {
+              players += 'Waiting for your opponent to join';
+            }
+          }
+          $player.html(players);
+          var status = '';
+          var color = game.turn() === 'b' ? 'Black' : 'White';
+          if (state === STATES.JOINING) { status = "Joining the game..."; }
+          else if (game.in_checkmate()) { status = 'Game over, ' + color + ' is in checkmate'; }
+          else if (game.in_draw()) { status = 'Game over, draw position'; }
+          else {
+            status = color + ' to move';
+            if (game.in_check()) {
+              status += ', ' + color + ' is in check';
+            }
+          }
+          $status.html(status);
+        }
+
+        $('#restartButton').click(function() {
+          game = new Chess();
+          fb.child('fen').set(game.fen());
+        });
+
+        updateStatus();
+      });
+    </script>
+  </body>
+</head>
+
