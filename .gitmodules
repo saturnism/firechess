@@ -1,0 +1,6 @@
+[submodule "third_party/chess.js"]
+	path = third_party/chess.js
+	url = https://github.com/jhlywa/chess.js
+[submodule "third_party/chessboardjs"]
+	path = third_party/chessboardjs
+	url = https://github.com/oakmac/chessboardjs/
